@@ -1,5 +1,6 @@
 import { Client, GatewayIntentBits, Events, ActivityType } from 'discord.js'
 import { createServer } from 'node:http'
+import { isAbsolute, resolve } from 'node:path'
 
 import { config } from './config.js'
 import { log, setLevel } from './logger.js'
@@ -13,8 +14,22 @@ import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap } from './price.js'
 import { getHead } from './chain.js'
 import { startDigest } from './digest.js'
+import { startBackfill } from './backfill.js'
 
 setLevel(config.logLevel)
+
+// A DB written inside the container (rather than on a mounted volume) looks
+// fine until the first redeploy silently wipes it. Warn early and loudly.
+function warnIfEphemeral(dbPath) {
+  const abs = isAbsolute(dbPath) ? dbPath : resolve(process.cwd(), dbPath)
+  const mounted = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  const persistent = mounted ? abs.startsWith(resolve(mounted)) : isAbsolute(dbPath)
+  if (persistent) return
+  log.warn(`DB_PATH=${dbPath} is not on a persistent volume — data will be lost on redeploy`)
+  if (mounted) log.warn(`point DB_PATH inside RAILWAY_VOLUME_MOUNT_PATH (${mounted})`)
+}
+
+warnIfEphemeral(config.dbPath)
 
 openDb(config.dbPath)
 
@@ -107,6 +122,7 @@ client.once(Events.ClientReady, async (c) => {
   // Catch up on anything missed while offline, then go live.
   await reconcile(sendAlert)
   startLive(sendAlert)
+ startBackfill(sendAlert).catch(e => log.error(`backfill: ${e.message}`))
  startDigest(sendAlert)
 
   setInterval(() => pruneSeen(), 60 * 60 * 1000)

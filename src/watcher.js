@@ -137,7 +137,7 @@ const queued = enqueueTrade(updated ?? pool, trade)
 if (!queued.ok) log.debug(` digest skipped: ${queued.reason}`)
 }
 
-async function processLogs(logs, send, res = { launches: 0, trades: 0 }) {
+export async function processLogs(logs, send, res = { launches: 0, trades: 0 }) {
   for (const rawLog of logs) {
     const topic0 = rawLog.topics?.[0]
     try {
@@ -181,7 +181,12 @@ export async function reconcile(send, {
     let reason = 'resume'
 
     if (from === null) {
-      from = head - coldStartBlocks
+// First run against an empty DB. Start where the launchpad was deployed so
+// the index reaches back to Ascend's beginnings instead of just the last
+// few thousand blocks. Deliberately does NOT walk to head here: that range
+// is millions of blocks, and doing it inline would block Discord login and
+// get the public RPC to rate-limit us. startBackfill() crawls it in batches.
+from = config.chain.startBlock < head ? config.chain.startBlock : head
       reason = 'cold start'
     }
 

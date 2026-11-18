@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/index.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
-    "backfill": "node --disable-warning=ExperimentalWarning src/backfill.js",
+    "backfill": "node --disable-warning=ExperimentalWarning src/backfill-cli.js",
     "test": "node test-price.mjs"
   },
   "dependencies": {
