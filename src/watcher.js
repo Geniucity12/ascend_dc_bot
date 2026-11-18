@@ -181,12 +181,11 @@ export async function reconcile(send, {
     let reason = 'resume'
 
     if (from === null) {
-// First run against an empty DB. Start where the launchpad was deployed so
-// the index reaches back to Ascend's beginnings instead of just the last
-// few thousand blocks. Deliberately does NOT walk to head here: that range
-// is millions of blocks, and doing it inline would block Discord login and
-// get the public RPC to rate-limit us. startBackfill() crawls it in batches.
-from = config.chain.startBlock < head ? config.chain.startBlock : head
+ // Empty DB: cover only a shallow recent window here so the bot starts
+ // alerting quickly. startBackfill() walks the full range from START_BLOCK
+ // in the background; crawling millions of blocks inline would block
+ // Discord login and get the public RPC to rate-limit us.
+ from = head > coldStartBlocks ? head - coldStartBlocks : 0n
       reason = 'cold start'
     }
 
@@ -194,21 +193,25 @@ from = config.chain.startBlock < head ? config.chain.startBlock : head
       from = head
     }
 
-    const behind = head - from
-    if (behind > maxBlocksPerRun) {
-      log.warn(`cursor ${behind} blocks behind; catching up in batches of ${maxBlocksPerRun}`)
-      from = head - maxBlocksPerRun
-      reason = 'capped'
-    }
+ // Walk FORWARD from the cursor. Never jump to head: jumping skips every
+ // block in between and then setCursor() below marks that history as
+ // indexed. The backfill owns deep history; reconcile advances one batch.
+ const behind = head - from
+ let to = head
+ if (behind > maxBlocksPerRun) {
+ to = from + maxBlocksPerRun
+ log.info(`cursor ${behind} blocks behind; this run covers ${maxBlocksPerRun}`)
+ reason = 'capped'
+ }
 
-    const span = head - from
-    log.info(`reconcile (${reason}) ${from} → ${head} (${span} block${span === 1n ? '' : 's'})`)
+ const span = to - from
+    log.info(`reconcile (${reason}) ${from} → ${to} (${span} block${span === 1n ? '' : 's'})`)
 
     if (span > 0n) {
       const logs = await getLogsChunked({
         address: [ADDR.launchpad, ADDR.poolManager],
         fromBlock: from + 1n,
-        toBlock: head,
+        toBlock: to,
       })
       log.info(`reconcile fetched ${logs.length} logs`)
 
@@ -225,7 +228,7 @@ from = config.chain.startBlock < head ? config.chain.startBlock : head
       }
     }
 
-    setCursor(CURSOR_KEY, head)
+    setCursor(CURSOR_KEY, to)
   } catch (e) {
     log.error(`reconcile failed: ${e.message}`)
   } finally {

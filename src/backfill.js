@@ -6,9 +6,16 @@ import { getHead, getLogsChunked } from './chain.js'
 import { getCursor, setCursor } from './db.js'
 import { processLogs } from './watcher.js'
 
-// Walks history forward from START_BLOCK one batch at a time.
+// Deep-history crawler. Reconcile() handles the shallow recent window so live
+// alerts recover quickly after a disconnect; this walks the full range from
+// START_BLOCK in resumable batches, because that is far too slow (and too
+// rate-limit-hostile) to do inline at startup.
+//
+// Uses its OWN cursor. Reconcile's `main` cursor tracks the live window and
+// jumps to head after every run, so sharing it would make this crawler think
+// the whole history was already indexed and exit immediately.
 
-const CURSOR_KEY = 'main'
+const CURSOR_KEY = 'backfill'
 const BATCH = 50_000n
 const PAUSE_MS = 1_500
 
@@ -17,19 +24,20 @@ let running = false
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 /**
- * Crawl the whole range the live watcher can't cover, in resumable batches.
+ * Crawl from the backfill cursor (or START_BLOCK) to head in batches.
+ *
+ * Resumable: the cursor is persisted after every batch, so a restart picks up
+ * where it stopped instead of re-crawling from the deploy block. Deliberately
+ * independent of reconcile's cursor — see CURSOR_KEY above.
  */
 export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } = {}) {
-  if (running) {
-    log.debug('backfill already running, skipping')
-    return
-  }
   running = true
 
   try {
     let head = await getHead()
-    let from = getCursor(CURSOR_KEY, config.chain.startBlock)
-    const start = from
+    const floor = config.chain.startBlock
+    const cursor = getCursor(CURSOR_KEY, floor)
+    let from = cursor < floor ? floor : cursor
 
     if (from >= head) {
       log.info(`backfill: already at head (${head}); nothing to do`)
@@ -57,7 +65,7 @@ export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } 
         await processLogs(logs.filter(l => l.topics?.[0] === TOPIC.Launched), send, res)
         await processLogs(logs.filter(l => l.topics?.[0] === TOPIC.PoolSwap), send, res)
       } catch (e) {
-        // Window permanently failed: skip it rather than stalling forever.
+        // A permanently failed window is skipped rather than stalling forever.
         log.error(`backfill ${from}-${to} failed: ${e.message}; skipping window`)
       }
 
@@ -65,12 +73,13 @@ export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } 
       trades += res.trades
       batches++
 
-      // Advance the cursor only after the batch is durably processed, so a
-      // crash resumes here instead of re-crawling from the deploy block.
+      // Advance only after the batch is durably processed, so a restart
+      // resumes here instead of re-crawling from the deploy block.
       from = to
       setCursor(CURSOR_KEY, from)
 
-      const pct = Number((from - start) * 1000n / (head - start)) / 10
+      const total = head - cursor || 1n
+      const pct = Number((from - cursor) * 1000n / total) / 10
       log.info(`backfill ${pct}% · block ${from} · launches=${launches} trades=${trades}`)
 
       if (from < head) await sleep(pauseMs)
