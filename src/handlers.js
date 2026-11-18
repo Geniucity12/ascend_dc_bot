@@ -3,7 +3,7 @@ import { config } from './config.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap, pctChange } from './price.js'
 import { resolveUri } from './metadata.js'
-import { getPoolByToken, addWatch, removeWatch, listWatches, recentPools, topPools } from './db.js'
+import { getPoolByToken, addWatch, removeWatch, listWatches, recentPools, topPools, setSetting } from './db.js'
 import { getHead } from './chain.js'
 import { infoEmbed, errorEmbed, short } from './render.js'
 
@@ -181,6 +181,7 @@ export async function handleCommand(interaction, state) {
     if (commandName === 'subscribe') {
       const channel = interaction.options.getChannel('channel', true)
       state.alertChannelId = channel.id
+ setSetting("alert_channel_id", channel.id)
       return interaction.reply({
         embeds: [infoEmbed('Subscribed', `Live alerts will post in <#${channel.id}>.`)],
         ephemeral: true,
@@ -189,6 +190,7 @@ export async function handleCommand(interaction, state) {
 
     if (commandName === 'unsubscribe') {
       state.alertChannelId = null
+ setSetting("alert_channel_id", null)
       return interaction.reply({ embeds: [infoEmbed('Unsubscribed', 'Live alerts are off.')], ephemeral: true })
     }
   } catch (e) {

@@ -8,7 +8,7 @@ import { openDb } from './db.js'
 import { commands } from './commands.js'
 import { handleCommand } from './handlers.js'
 import { reconcile, startLive } from './watcher.js'
-import { pruneSeen, watchersOf } from './db.js'
+import { pruneSeen, watchersOf, getSetting } from './db.js'
 import { infoEmbed } from './render.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap } from './price.js'
@@ -34,7 +34,10 @@ warnIfEphemeral(config.dbPath)
 openDb(config.dbPath)
 
 const state = {
-  alertChannelId: config.discord.alertChannelId || null,
+ // Precedence: whatever /subscribe persisted beats ALERT_CHANNEL_ID. The DB
+ // wins because it is the more recent, in-Discord decision; the env var is
+ // only the bootstrap value for a cold first run.
+ alertChannelId: getSetting("alert_channel_id", config.discord.alertChannelId || null),
 }
 
 const client = new Client({

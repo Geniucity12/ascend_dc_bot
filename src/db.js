@@ -72,6 +72,13 @@ function migrate() {
       created_at INTEGER NOT NULL
     )
   `)
+
+db.exec(`
+ CREATE TABLE IF NOT EXISTS settings (
+ key TEXT PRIMARY KEY,
+ value TEXT NOT NULL
+ )
+`)
 }
 
 function hydrate(row) {
@@ -199,6 +206,28 @@ export function topPools(limit = 10) {
     .prepare('SELECT * FROM pools ORDER BY volume_quote DESC LIMIT ?')
     .all(limit)
     .map(hydrate)
+}
+
+// ─── Settings ───────────────────────────────────────────────────────────────
+// Small key/value store for state that has to survive a restart. Notably the
+// alert channel: /subscribe used to assign it to an in-memory object, so every
+// redeploy silently reverted the channel and the bot kept replying
+// "Subscribed" while posting nowhere.
+
+export function getSetting(key, fallback = null) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key)
+  return row ? row.value : fallback
+}
+
+export function setSetting(key, value) {
+  if (value == null) {
+    db.prepare('DELETE FROM settings WHERE key = ?').run(key)
+    return
+  }
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(key, String(value))
 }
 
 // ─── Watchlist ──────────────────────────────────────────────────────────────
