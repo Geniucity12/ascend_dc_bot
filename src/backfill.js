@@ -6,18 +6,25 @@ import { getHead, getLogsChunked } from './chain.js'
 import { getCursor, setCursor } from './db.js'
 import { processLogs } from './watcher.js'
 
-// Deep-history crawler. Reconcile() handles the shallow recent window so live
-// alerts recover quickly after a disconnect; this walks the full range from
-// START_BLOCK in resumable batches, because that is far too slow (and too
-// rate-limit-hostile) to do inline at startup.
+// Deep-history crawler.
 //
-// Uses its OWN cursor. Reconcile's `main` cursor tracks the live window and
-// jumps to head after every run, so sharing it would make this crawler think
+// Reconcile() keeps the shallow recent window healthy so live alerts recover
+// quickly after a disconnect. This walks the full range from START_BLOCK in
+// resumable batches, because that is far too slow (and too rate-limit-hostile)
+// to do inline at startup.
+//
+// It uses its OWN cursor. Reconcile's `main` cursor tracks the live window and
+// jumps to head after every run; sharing it would make this crawler believe
 // the whole history was already indexed and exit immediately.
 
 const CURSOR_KEY = 'backfill'
-const BATCH = 50_000n
-const PAUSE_MS = 1_500
+
+// Batches are deliberately small. A batch contains every launch in its block
+// range, and each launch costs three RPC calls (token, slot0, metadata) that
+// are processed one at a time. A 50k window can hold 90+ launches, i.e. ~270
+// serial calls before the cursor moves once, which makes the crawl look hung.
+const BATCH = 10_000n
+const PAUSE_MS = 750
 
 let running = false
 
@@ -27,8 +34,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
  * Crawl from the backfill cursor (or START_BLOCK) to head in batches.
  *
  * Resumable: the cursor is persisted after every batch, so a restart picks up
- * where it stopped instead of re-crawling from the deploy block. Deliberately
- * independent of reconcile's cursor — see CURSOR_KEY above.
+ * where it stopped instead of re-crawling from the deploy block.
  */
 export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } = {}) {
   running = true
@@ -44,7 +50,8 @@ export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } 
       return
     }
 
-    log.info(`backfill: ${from} → ${head} (${head - from} blocks, ${batch}/batch)`)
+    const total = head - cursor
+    log.info(`backfill: ${from} → ${head} (${total} blocks, ${batch}/batch)`)
 
     let launches = 0
     let trades = 0
@@ -53,6 +60,7 @@ export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } 
     while (from < head) {
       const to = from + batch > head ? head : from + batch
       const res = { launches: 0, trades: 0 }
+      const startedAt = Date.now()
 
       try {
         const logs = await getLogsChunked({
@@ -61,9 +69,21 @@ export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } 
           toBlock: to,
         })
 
+        const launchLogs = logs.filter(l => l.topics?.[0] === TOPIC.Launched)
+        const swapLogs = logs.filter(l => l.topics?.[0] === TOPIC.PoolSwap)
+
+        // Announce the batch before processing it. A launch-dense window takes
+        // minutes to enrich, and without this it is indistinguishable from a
+        // hung process.
+        log.info(
+          `backfill batch ${from}-${to}: ${logs.length} logs ` +
+          `(${launchLogs.length} launches, ${swapLogs.length} swaps)`,
+        )
+
         // Launches first so swaps can resolve their pool.
-        await processLogs(logs.filter(l => l.topics?.[0] === TOPIC.Launched), send, res)
-        await processLogs(logs.filter(l => l.topics?.[0] === TOPIC.PoolSwap), send, res)
+        // silent=true: index history without posting it to Discord.
+        await processLogs(launchLogs, send, res, true)
+        await processLogs(swapLogs, send, res, true)
       } catch (e) {
         // A permanently failed window is skipped rather than stalling forever.
         log.error(`backfill ${from}-${to} failed: ${e.message}; skipping window`)
@@ -78,9 +98,11 @@ export async function startBackfill(send, { batch = BATCH, pauseMs = PAUSE_MS } 
       from = to
       setCursor(CURSOR_KEY, from)
 
-      const total = head - cursor || 1n
-      const pct = Number((from - cursor) * 1000n / total) / 10
-      log.info(`backfill ${pct}% · block ${from} · launches=${launches} trades=${trades}`)
+      const pct = Number((from - cursor) * 1000n / (total || 1n)) / 10
+      const secs = ((Date.now() - startedAt) / 1000).toFixed(1)
+      log.info(
+        `backfill ${pct}% · block ${from} · launches=${launches} trades=${trades} · ${secs}s`,
+      )
 
       if (from < head) await sleep(pauseMs)
       head = await getHead()

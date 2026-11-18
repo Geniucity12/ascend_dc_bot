@@ -61,7 +61,11 @@ export const config = {
     digestMinTrades: num('DIGEST_MIN_TRADES', 10),
     digestMinVolume: num('DIGEST_MIN_VOLUME', 5),
     poolCooldownSeconds: num('POOL_COOLDOWN_SECONDS', 8),
-    maxAlertsPerMinute: num('MAX_ALERTS_PER_MINUTE', 20),
+    // Discord allows roughly 5 messages/second per channel; this cap is the
+  // per-minute expression of that with headroom for the digest embeds that
+  // share the channel. The old default of 20/min throttled launch-dense
+  // periods hard enough to drop most of them.
+  maxAlertsPerMinute: num('MAX_ALERTS_PER_MINUTE', 120),
     launches: bool('ALERT_LAUNCHES', true),
     trades: bool('ALERT_TRADES', true),
   },

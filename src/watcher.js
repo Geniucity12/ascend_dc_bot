@@ -15,6 +15,11 @@ import { enqueueTrade } from './digest.js'
 
 const CURSOR_KEY = 'main'
 
+// Anything beyond this many blocks is a catch-up rather than a live feed. Its
+// events are indexed silently so a reconnect cannot replay hours of history
+// into the channel.
+const RECENT_WINDOW = 2_000n
+
 // Rate limiting: a busy pool can trade many times a second. We cap total
 // alerts per minute and enforce a per-pool cooldown so the channel stays
 // readable instead of turning into a firehose.
@@ -26,6 +31,14 @@ function underRateLimit() {
   const now = Date.now()
   while (recentAlerts.length && now - recentAlerts[0] > 60_000) recentAlerts.shift()
   return recentAlerts.length < config.alerts.maxAlertsPerMinute
+}
+
+// Drops are counted and reported in aggregate. One warning per dropped launch
+// buries the log during a launch rush and tells you nothing you can act on.
+let droppedAlerts = 0
+
+function noteDropped() {
+  droppedAlerts++
 }
 
 function poolCooledDown(poolId) {
@@ -42,7 +55,7 @@ function noteAlert(poolId) {
  * Handle a Launched event: read the token, resolve metadata, store the pool,
  * and post the launch embed.
  */
-async function handleLaunch(rawLog, send, res) {
+async function handleLaunch(rawLog, send, res, silent = false) {
   const decoded = decodeLog(rawLog)
   if (!decoded || decoded.eventName !== 'Launched') return
   const { poolId, token, creator, quote, devBuyTokens, fee, builderFee } = decoded.args
@@ -82,11 +95,16 @@ async function handleLaunch(rawLog, send, res) {
   }
 
   insertPool(pool)
-  log.info(`launch ${pool.symbol ?? token} pool=${poolId.slice(0, 10)} price=${firstPrice}`)
+  log.debug(`indexed launch ${pool.symbol ?? token} pool=${poolId.slice(0, 10)} price=${firstPrice}`)
+
+  // Historical backfill indexes the pool but must never announce it: a launch
+  // from two weeks ago appearing in the channel as if it just happened is
+  // indistinguishable from spam.
+  if (silent) return
 
   if (!config.alerts.launches) return
   if (!underRateLimit()) {
-    log.warn('launch alert dropped: rate limit')
+ noteDropped()
     return
   }
 
@@ -101,7 +119,7 @@ async function handleLaunch(rawLog, send, res) {
  * Handle a PoolManager Swap event. Only pools Ascend launched are alerted on;
  * the PoolManager carries every v4 pool on the chain.
  */
-async function handleSwap(rawLog, send, res) {
+async function handleSwap(rawLog, send, res, silent = false) {
   const decoded = decodeLog(rawLog)
   if (!decoded || decoded.eventName !== 'Swap') return
 
@@ -121,6 +139,12 @@ async function handleSwap(rawLog, send, res) {
     `${trade.quoteAmount.toFixed(4)} ${q.symbol} @ ${trade.price.toExponential(4)}`,
   )
 
+  // Backfill records the trade against the pool (so /pool, /top and volume
+  // stats are accurate) but must not queue a digest for it: ticking off two
+  // weeks of history would post a burst of summaries for trades nobody can act
+  // on any more.
+  if (silent) return
+
   if (!config.alerts.trades) return
 
   const minTrade = config.alerts.minTradeQuote
@@ -137,16 +161,16 @@ const queued = enqueueTrade(updated ?? pool, trade)
 if (!queued.ok) log.debug(` digest skipped: ${queued.reason}`)
 }
 
-export async function processLogs(logs, send, res = { launches: 0, trades: 0 }) {
+export async function processLogs(logs, send, res = { launches: 0, trades: 0 }, silent = false) {
   for (const rawLog of logs) {
     const topic0 = rawLog.topics?.[0]
     try {
       if (topic0 === TOPIC.Launched) {
         const before = res.launches
-        await handleLaunch(rawLog, send, res)
+        await handleLaunch(rawLog, send, res, silent)
         if (res.launches > before) continue
       } else if (topic0 === TOPIC.PoolSwap) {
-        await handleSwap(rawLog, send, res)
+        await handleSwap(rawLog, send, res, silent)
       }
     } catch (e) {
       log.error(`failed handling ${topic0?.slice(0, 10)}: ${e.message}`)
@@ -220,8 +244,11 @@ export async function reconcile(send, {
       const swaps = logs.filter(l => l.topics?.[0] === TOPIC.PoolSwap)
       const res = { launches: 0, trades: 0 }
 
-      await processLogs(launches, send, res)
-      await processLogs(swaps, send, res)
+ const catchingUp = span > RECENT_WINDOW
+ if (catchingUp) log.info(`reconcile catch-up (${span} blocks); indexing silently`)
+
+ await processLogs(launches, send, res, catchingUp)
+ await processLogs(swaps, send, res, catchingUp)
 
       if (res.launches || res.trades) {
         log.info(`reconcile processed launches=${res.launches} trades=${res.trades}`)
