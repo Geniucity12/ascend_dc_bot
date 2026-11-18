@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: ascend-dc-bot
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --disable-warning=ExperimentalWarning
+      - key: DB_PATH
+        value: /var/data/ascend.db
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: GUILD_ID
+        sync: false
+      - key: ALERT_CHANNEL_ID
+        sync: false
+      - key: ALCHEMY_KEY
+        sync: false
+      - key: PUBLIC_RPC_URL
+        value: https://rpc.elysium.kinetiq.xyz
+      - key: START_BLOCK
+        value: "422319"
+      - key: MIN_TRADE_QUOTE
+        value: "0.05"
+    disk:
+      name: ascend-data
+      mountPath: /var/data
+      sizeGB: 1

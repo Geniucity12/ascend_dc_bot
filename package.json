@@ -1,0 +1,20 @@
+{
+  "name": "ascend-dc-bot",
+  "version": "1.0.0",
+  "description": "Discord alert bot for Ascend launches and trades (Elysium chain 99901)",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
+    "backfill": "node --disable-warning=ExperimentalWarning src/backfill.js",
+    "test": "node test-price.mjs"
+  },
+  "dependencies": {
+    "discord.js": "^14.28.1",
+    "viem": "^2.58.0"
+  }
+}
