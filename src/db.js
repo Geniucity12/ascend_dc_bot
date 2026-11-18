@@ -196,7 +196,7 @@ export function recordTrade(poolId, { price, volumeQuote }) {
 
 export function recentPools(limit = 10) {
   return db
-    .prepare('SELECT * FROM pools ORDER BY launched_at DESC LIMIT ?')
+    .prepare('SELECT * FROM pools ORDER BY COALESCE(launch_block, 0) DESC, launched_at DESC LIMIT ?')
     .all(limit)
     .map(hydrate)
 }

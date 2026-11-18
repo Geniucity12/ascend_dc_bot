@@ -11,7 +11,7 @@
     "start": "node --disable-warning=ExperimentalWarning src/index.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
     "backfill": "node --disable-warning=ExperimentalWarning src/backfill-cli.js",
-    "test": "node test-price.mjs && node test-silent-backfill.mjs && node --disable-warning=ExperimentalWarning test-subscribe-persist.mjs"
+    "test": "node test-price.mjs && node test-silent-backfill.mjs && node --disable-warning=ExperimentalWarning test-subscribe-persist.mjs && node --disable-warning=ExperimentalWarning test-recent-order.mjs"
   },
   "dependencies": {
     "discord.js": "^14.28.1",
