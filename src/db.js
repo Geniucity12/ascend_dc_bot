@@ -230,6 +230,21 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(key, String(value))
 }
 
+export function poolCount() {
+  const row = db.prepare('SELECT COUNT(*) AS n FROM pools').get()
+  return row ? row.n : 0
+}
+
+/**
+ * How far back the descending backfill has crawled, as a block number. Used by
+ * /status so the gap between "newest launch" and "oldest indexed" is visible
+ * instead of looking like the bot is silently broken.
+ */
+export function historyFloor() {
+  const row = db.prepare("SELECT block FROM cursors WHERE key = 'backfill_desc'").get()
+  return row ? Number(row.block) : null
+}
+
 // ─── Watchlist ──────────────────────────────────────────────────────────────
 
 export function addWatch(guildId, userId, token, channelId) {

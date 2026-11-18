@@ -3,7 +3,7 @@ import { config } from './config.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap, pctChange } from './price.js'
 import { resolveUri } from './metadata.js'
-import { getPoolByToken, addWatch, removeWatch, listWatches, recentPools, topPools, setSetting } from './db.js'
+import { getPoolByToken, addWatch, removeWatch, listWatches, recentPools, topPools, setSetting, poolCount, historyFloor } from './db.js'
 import { getHead } from './chain.js'
 import { infoEmbed, errorEmbed, short } from './render.js'
 
@@ -121,7 +121,8 @@ export async function handleCommand(interaction, state) {
       if (!pools.length) return interaction.reply({ embeds: [infoEmbed('Recent launches', 'Nothing indexed yet.')] })
       const lines = pools.map((p, i) => {
         const q = quoteInfo(p.quote)
-        return `${i + 1}. **${p.symbol ?? '?'}** — ${fmtAmount(marketCap(p.lastPrice ?? p.firstPrice ?? 0))} ${q.symbol} · [token](${tokenLink(p.token)})`
+        const blk = p.launchBlock != null ? ` · ${p.launchBlock}` : ''
+      return `${i + 1}. **${p.symbol ?? '?'}** — ${fmtAmount(marketCap(p.lastPrice ?? p.firstPrice ?? 0))} ${q.symbol} · [token](${tokenLink(p.token)})${blk}`
       })
       return interaction.reply({ embeds: [infoEmbed('Recent launches', lines.join('\n'))] })
     }
@@ -171,6 +172,8 @@ export async function handleCommand(interaction, state) {
       const lines = [
         '**Chain** Elysium (99901)',
         `**Head block** ${head ?? 'unreachable'}`,
+ `**Indexed back to** ${historyFloor() ?? 'unknown'} (backfill low-water)`,
+ `**Pools stored** ${poolCount()}`,
         `**Alerts channel** ${state.alertChannelId ? `<#${state.alertChannelId}>` : 'not set'}`,
         `**Launches** ${config.alerts.launches ? 'on' : 'off'} · **Trades** ${config.alerts.trades ? 'on' : 'off'}`,
         `**Rate cap** ${config.alerts.maxAlertsPerMinute}/min · cooldown ${config.alerts.poolCooldownSeconds}s`,
