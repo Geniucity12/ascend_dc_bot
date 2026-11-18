@@ -7,6 +7,7 @@ import {
 } from './chain.js'
 import {
   getCursor, setCursor, insertPool, getPool, recordTrade, markSeen,
+  markAnnounced, updatePool, unannouncedPools,
 } from './db.js'
 import { fetchMetadata } from './metadata.js'
 import { sqrtPriceToPrice, parseSwap } from './price.js'
@@ -15,9 +16,13 @@ import { enqueueTrade } from './digest.js'
 
 const CURSOR_KEY = 'main'
 
-// Anything beyond this many blocks is a catch-up rather than a live feed. Its
-// events are indexed silently so a reconnect cannot replay hours of history
-// into the channel.
+// How many blocks back a launch is still "live" enough to announce. Measured in
+// blocks BEHIND HEAD, not in the size of the range being walked.
+//
+// The old test silenced any range wider than this, which meant a restart that
+// landed ~13 minutes behind head (2000 blocks at ~150 blocks/min) indexed the
+// launches in the gap silently and permanently: markSeen + insertPool(DO
+// NOTHING) meant no later pass could ever announce them. GTI was lost this way.
 const RECENT_WINDOW = 2_000n
 
 // Rate limiting: a busy pool can trade many times a second. We cap total
@@ -60,8 +65,37 @@ async function handleLaunch(rawLog, send, res, silent = false) {
   if (!decoded || decoded.eventName !== 'Launched') return
   const { poolId, token, creator, quote, devBuyTokens, fee, builderFee } = decoded.args
 
-  if (!markSeen(`L:${rawLog.transactionHash}:${rawLog.logIndex}`)) return
-  if (getPool(poolId)) return
+  const fresh = markSeen(`L:${rawLog.transactionHash}:${rawLog.logIndex}`)
+  const existing = getPool(poolId)
+
+  // A pool can be in the database and still never have been announced.
+  // Backfill and catch-up index launches silently and insertPool never
+  // overwrites, so without this branch the alert was lost forever: every
+  // later pass hit "already indexed" and returned before it could post.
+  if (existing) {
+    if (existing.announced || silent || !config.alerts.launches) return
+    if (!underRateLimit()) {
+      noteDropped()
+      return
+    }
+    noteAlert(poolId)
+ try {
+  await send({
+   embeds: [launchEmbed({ pool: existing, metadata: null, txHash: rawLog.transactionHash })],
+   poolToken: existing.token,
+  })
+ } catch (e) {
+  // Leave it unannounced so a later pass retries instead of losing it.
+  log.error(`recover ${existing.symbol ?? poolId.slice(0, 10)} failed: ${e.message}`)
+  return
+ }
+ markAnnounced(poolId)
+ if (res) res.launches++
+ log.info(`recovered unannounced launch ${existing.symbol ?? poolId.slice(0, 10)}`)
+ return
+ }
+
+  if (!fresh) return
   if (res) res.launches++
 
   const [tok, slot0, metadata] = await Promise.all([
@@ -104,15 +138,36 @@ async function handleLaunch(rawLog, send, res, silent = false) {
 
   if (!config.alerts.launches) return
   if (!underRateLimit()) {
- noteDropped()
+    noteDropped()
     return
   }
 
   noteAlert(poolId)
   await send({
     embeds: [launchEmbed({ pool, metadata, txHash: rawLog.transactionHash })],
-  poolToken: token,
+    poolToken: token,
   })
+  // Only after the send lands: a failed Discord call must leave the launch
+  // recoverable rather than marked as posted.
+  markAnnounced(poolId)
+}
+
+/**
+ * EscrowLaunched comes from the escrow factory rather than the launchpad, so it
+ * carries a different payload: no name, quote, fee or dev buy. It therefore
+ * cannot create a pool row; its only job is to attach the escrow address to the
+ * pool that the launchpad's Launched event already created.
+ */
+async function handleEscrowLaunch(rawLog) {
+ const decoded = decodeLog(rawLog)
+ if (!decoded || decoded.eventName !== 'EscrowLaunched') return
+ const { poolId, escrow } = decoded.args
+ if (!poolId || !escrow) return
+ if (!getPool(poolId)) {
+  log.debug(`escrow launch for unknown pool ${poolId.slice(0, 10)}; ignoring`)
+  return
+ }
+ updatePool(poolId, { escrow })
 }
 
 /**
@@ -162,20 +217,64 @@ if (!queued.ok) log.debug(` digest skipped: ${queued.reason}`)
 }
 
 export async function processLogs(logs, send, res = { launches: 0, trades: 0 }, silent = false) {
-  for (const rawLog of logs) {
-    const topic0 = rawLog.topics?.[0]
-    try {
-      if (topic0 === TOPIC.Launched) {
-        const before = res.launches
-        await handleLaunch(rawLog, send, res, silent)
-        if (res.launches > before) continue
-      } else if (topic0 === TOPIC.PoolSwap) {
-        await handleSwap(rawLog, send, res, silent)
-      }
-    } catch (e) {
-      log.error(`failed handling ${topic0?.slice(0, 10)}: ${e.message}`)
-    }
+ for (const rawLog of logs) {
+  const topic0 = rawLog.topics?.[0]
+  try {
+   if (topic0 === TOPIC.Launched) {
+    const before = res.launches
+    await handleLaunch(rawLog, send, res, silent)
+    if (res.launches > before) continue
+   } else if (topic0 === TOPIC.EscrowLaunched) {
+    // Cannot build a pool (different payload); only attaches the escrow
+    // address to a pool the Launched event already created.
+    await handleEscrowLaunch(rawLog)
+   } else if (topic0 === TOPIC.PoolSwap) {
+    await handleSwap(rawLog, send, res, silent)
+   }
+  } catch (e) {
+   log.error(`failed handling ${topic0?.slice(0, 10)}: ${e.message}`)
   }
+ }
+}
+
+/**
+ * Announce any launch that is in the database but was never posted.
+ *
+ * This is the repair path for the "indexed silently, then forgotten" bug: a
+ * restart that landed behind head marked a launch seen and stored while
+ * suppressing the post, after which no later pass could announce it. Recent
+ * unannounced pools are recovered here on boot. Anything older than
+ * RECENT_WINDOW blocks is flagged without posting — it is history, and posting
+ * it now would look like a launch that just happened.
+ */
+export async function recoverUnannounced(send, head) {
+ const pools = unannouncedPools(50)
+ if (!pools.length) return 0
+
+ let announced = 0
+ for (const pool of pools) {
+  if (!pool.launchBlock) continue
+
+  const age = head != null ? head - BigInt(pool.launchBlock) : 0n
+  if (age > RECENT_WINDOW || !config.alerts.launches) {
+   markAnnounced(pool.poolId)
+   continue
+  }
+  if (!underRateLimit()) {
+   noteDropped()
+   continue
+  }
+
+  try {
+   await send({ embeds: [launchEmbed({ pool, metadata: null })], poolToken: pool.token })
+   markAnnounced(pool.poolId)
+   announced++
+   log.info(`announced previously missed launch ${pool.symbol ?? pool.poolId.slice(0, 10)}`)
+  } catch (e) {
+   log.error(`recover ${pool.symbol ?? pool.poolId.slice(0, 10)} failed: ${e.message}`)
+  }
+ }
+ return announced
 }
 
 /**
@@ -244,11 +343,27 @@ export async function reconcile(send, {
       const swaps = logs.filter(l => l.topics?.[0] === TOPIC.PoolSwap)
       const res = { launches: 0, trades: 0 }
 
- const catchingUp = span > RECENT_WINDOW
- if (catchingUp) log.info(`reconcile catch-up (${span} blocks); indexing silently`)
+      // Split by age rather than by span: a restart that fell 50,000 blocks
+      // behind must still announce the launches in its last RECENT_WINDOW
+      // blocks, because those are the ones a trader can still act on.
+      // Everything older is indexed silently.
+      const isRecent = (l) => l.blockNumber != null && to - l.blockNumber <= RECENT_WINDOW
+      const recentLaunches = launches.filter(isRecent)
+      const oldLaunches = launches.filter(l => !isRecent(l))
+      const recentSwaps = swaps.filter(isRecent)
+      const oldSwaps = swaps.filter(l => !isRecent(l))
 
- await processLogs(launches, send, res, catchingUp)
- await processLogs(swaps, send, res, catchingUp)
+      if (span > RECENT_WINDOW) {
+        log.info(
+          `reconcile catch-up (${span} blocks): ${recentLaunches.length} recent launches ` +
+          `announced, ${oldLaunches.length} older indexed silently`,
+        )
+      }
+
+      await processLogs(oldLaunches, send, res, true)
+      await processLogs(oldSwaps, send, res, true)
+      await processLogs(recentLaunches, send, res, false)
+      await processLogs(recentSwaps, send, res, false)
 
       if (res.launches || res.trades) {
         log.info(`reconcile processed launches=${res.launches} trades=${res.trades}`)
@@ -311,6 +426,7 @@ export function startLive(send) {
         const topic0 = rawLog.topics?.[0]
         try {
           if (topic0 === TOPIC.Launched) await handleLaunch(rawLog, send)
+ else if (topic0 === TOPIC.EscrowLaunched) await handleEscrowLaunch(rawLog)
           else if (topic0 === TOPIC.PoolSwap) await handleSwap(rawLog, send)
           // NOTE: deliberately does NOT advance the cursor. Live events are
           // sparse and can be missed while the socket is down, so they are

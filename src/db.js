@@ -15,6 +15,18 @@ export function openDb(path) {
   return db
 }
 
+/**
+ * Add a column to a table that predates it. SQLite has no
+ * "ADD COLUMN IF NOT EXISTS", so probe table_info first: on an existing volume
+ * a blind ALTER TABLE would crash the bot on every restart.
+ */
+function addColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (cols.some(c => c.name === column)) return
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`)
+  log.info(`migrated: ${table}.${column}`)
+}
+
 function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pools (
@@ -40,6 +52,7 @@ function migrate() {
       volume_quote   REAL NOT NULL DEFAULT 0,
       escrow         TEXT,
       last_alert_at  INTEGER NOT NULL DEFAULT 0,
+      announced INTEGER NOT NULL DEFAULT 0,
       created_at     INTEGER NOT NULL
     )
   `)
@@ -79,6 +92,11 @@ db.exec(`
  value TEXT NOT NULL
  )
 `)
+
+
+  // Pools indexed before this column existed were never announced. Left at 0
+  // they stay recoverable instead of being assumed posted.
+  addColumn('pools', 'announced', 'announced INTEGER NOT NULL DEFAULT 0')
 }
 
 function hydrate(row) {
@@ -105,6 +123,7 @@ function hydrate(row) {
     volumeQuote: row.volume_quote,
     escrow: row.escrow,
     lastAlertAt: row.last_alert_at,
+    announced: row.announced === 1,
   }
 }
 
@@ -157,6 +176,21 @@ export function updatePool(poolId, fields) {
   const set = entries.map(([k]) => `${k} = ?`).join(', ')
   db.prepare(`UPDATE pools SET ${set} WHERE pool_id = ?`)
     .run(...entries.map(([, v]) => v), poolId)
+}
+
+/**
+ * Flip a pool's "this launch was posted" flag. Written only after the send
+ * succeeds, so a failed Discord call leaves the launch recoverable.
+ */
+export function markAnnounced(poolId) {
+  db.prepare('UPDATE pools SET announced = 1 WHERE pool_id = ?').run(poolId)
+}
+
+export function unannouncedPools(limit = 20) {
+  return db
+    .prepare('SELECT * FROM pools WHERE announced = 0 ORDER BY launch_block DESC LIMIT ?')
+    .all(limit)
+    .map(hydrate)
 }
 
 export function getPool(poolId) {

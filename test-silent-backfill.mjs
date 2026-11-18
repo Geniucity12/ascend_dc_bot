@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs'
 // conditions that caused two weeks of launches to be replayed into Discord.
 const watcher = readFileSync('src/watcher.js', 'utf8')
 const backfill = readFileSync('src/backfill.js', 'utf8')
+const dbSrc = readFileSync('src/db.js', 'utf8')
+const indexSrc = readFileSync('src/index.js', 'utf8')
 
 const checks = [
   ['processLogs accepts silent', /export async function processLogs\([^)]*silent = false\)/.test(watcher)],
@@ -13,8 +15,25 @@ const checks = [
   ['handleSwap returns before digest when silent', /if \(silent\) return[\s\S]{0,600}enqueueTrade/.test(watcher)],
   ['backfill calls processLogs silently', /processLogs\(launchLogs, send, res, true\)/.test(backfill)],
   ['backfill calls swap processLogs silently', /processLogs\(swapLogs, send, res, true\)/.test(backfill)],
-  ['reconcile silences long catch-ups', /const catchingUp = span > RECENT_WINDOW/.test(watcher)],
-  ['reconcile passes catchingUp', /processLogs\(launches, send, res, catchingUp\)/.test(watcher)],
+// The 2000-block SPAN test was the bug: a restart landing ~13 min behind head
+// silenced every launch in the gap, permanently. Silence now depends on each
+// log's distance from head, not the width of the range being walked.
+['reconcile no longer silences on span', !/catchingUp = span > RECENT_WINDOW/.test(watcher)],
+['reconcile classifies per-log by age', /isRecent = \(l\) => .*to - l\.blockNumber <= RECENT_WINDOW/.test(watcher)],
+['reconcile still silences old launches', /processLogs\(oldLaunches, send, res, true\)/.test(watcher)],
+['reconcile announces recent launches', /processLogs\(recentLaunches, send, res, false\)/.test(watcher)],
+
+// Recovery: a launch indexed silently must stay postable later.
+['pools have an announced column', /announced INTEGER NOT NULL DEFAULT 0/.test(dbSrc)],
+["announced migrates onto old volumes", /addColumn\('pools', 'announced'/.test(dbSrc)],
+['markAnnounced exists', /export function markAnnounced/.test(dbSrc)],
+['unannouncedPools exists', /export function unannouncedPools/.test(dbSrc)],
+['handleLaunch recovers unannounced pools', /existing\.announced/.test(watcher)],
+['recovery wired at startup', /recoverUnannounced\(sendAlert/.test(indexSrc)],
+
+// Escrow launches were decoded but never routed, so they were invisible.
+['EscrowLaunched is routed', /TOPIC\.EscrowLaunched\) \{/.test(watcher)],
+['escrow handler defined', /async function handleEscrowLaunch/.test(watcher)],
 ]
 
 let failed = 0
@@ -23,10 +42,13 @@ for (const [name, ok] of checks) {
   if (!ok) failed++
 }
 
-// Ordering matters: the silent guard must appear BEFORE the send call.
+// Ordering matters: for a freshly-indexed launch the silent guard must run
+// BEFORE the announce send. Measured from insertPool onward, because the
+// recovery branch above it is allowed to post an already-indexed pool.
 const launchBody = watcher.slice(watcher.indexOf('async function handleLaunch'))
-const sendIdx = launchBody.indexOf('await send(')
-const silentIdx = launchBody.indexOf('if (silent) return')
+const afterInsert = launchBody.slice(launchBody.indexOf('insertPool(pool)'))
+const sendIdx = afterInsert.indexOf('await send(')
+const silentIdx = afterInsert.indexOf('if (silent) return')
 console.log(`${silentIdx !== -1 && silentIdx < sendIdx ? 'PASS' : 'FAIL'} launch silent-guard precedes send()`)
 if (!(silentIdx !== -1 && silentIdx < sendIdx)) failed++
 

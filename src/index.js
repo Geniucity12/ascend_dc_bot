@@ -7,7 +7,7 @@ import { log, setLevel } from './logger.js'
 import { openDb } from './db.js'
 import { commands } from './commands.js'
 import { handleCommand } from './handlers.js'
-import { reconcile, startLive } from './watcher.js'
+import { reconcile, startLive, recoverUnannounced } from './watcher.js'
 import { pruneSeen, watchersOf, getSetting } from './db.js'
 import { infoEmbed } from './render.js'
 import { quoteInfo } from './constants.js'
@@ -122,8 +122,18 @@ client.once(Events.ClientReady, async (c) => {
     status: 'online',
   })
 
-  // Catch up on anything missed while offline, then go live.
-  await reconcile(sendAlert)
+ // Recovery runs before reconcile: a previous process can have indexed a launch
+ // while suppressing the post (a restart that landed behind head did exactly
+ // that to GTI), leaving a pool row with announced = 0 that no later pass would
+ // ever post. Then catch up on anything missed while offline, and go live.
+ const startupHead = await getHead().catch(() => null)
+ const recovered = await recoverUnannounced(sendAlert, startupHead).catch((e) => {
+  log.error(`recover unannounced: ${e.message}`)
+  return 0
+ })
+ if (recovered) log.info(`recovered ${recovered} missed launch alert(s)`)
+
+ await reconcile(sendAlert)
   startLive(sendAlert)
  startBackfill(sendAlert).catch(e => log.error(`backfill: ${e.message}`))
  startDigest(sendAlert)
