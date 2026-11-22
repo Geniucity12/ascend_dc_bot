@@ -1,4 +1,4 @@
-import { EmbedBuilder } from 'discord.js'
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js'
 import { config } from './config.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap, pctChange } from './price.js'
@@ -25,6 +25,49 @@ function addrLink(addr) {
 
 function tokenLink(addr) {
   return `${config.explorerUrl}/token/${addr}`
+}
+
+/**
+ * Deep-link buttons. The point of an alert is not to inform, it is to get
+ * someone to the trade screen in one click, so every launch carries the
+ * buy link rather than making people copy a contract address out of an embed.
+ *
+ * Link-style buttons: no custom_id, no interaction handling, no permissions
+ * beyond what embeds already need.
+ */
+export function quickBuyRows(pool) {
+  if (!pool?.token) return []
+
+  const ca = pool.token
+  const buttons = []
+
+  buttons.push(
+    new ButtonBuilder()
+      .setStyle(ButtonStyle.Link)
+      .setLabel('Buy on Ascend')
+      .setURL(`${config.ascendAppUrl}${config.ascendTokenPath}${ca}`),
+  )
+
+  if (config.fomoUrlTemplate) {
+    buttons.push(
+      new ButtonBuilder()
+        .setStyle(ButtonStyle.Link)
+        .setLabel('Trade on Fomo')
+        .setURL(config.fomoUrlTemplate.replace('{ca}', ca)),
+    )
+  }
+
+  buttons.push(
+    new ButtonBuilder()
+      .setStyle(ButtonStyle.Link)
+      .setLabel('View Chart')
+      .setURL(tokenLink(ca)),
+  )
+
+  // Discord caps a row at five buttons; three are used here, so one row is
+  // always enough. Rows are still returned as an array because the callers
+  // pass `components` straight through.
+  return [new ActionRowBuilder().addComponents(buttons)]
 }
 
 /**
@@ -81,6 +124,15 @@ export function launchEmbed({ pool, metadata, txHash, blockNumber }) {
   }
 
   return e
+}
+
+/** Launch embed plus its buy buttons, ready to hand to channel.send(). */
+export function launchMessage({ pool, metadata, txHash }) {
+  return {
+    embeds: [launchEmbed({ pool, metadata, txHash })],
+    components: quickBuyRows(pool),
+    poolToken: pool.token,
+  }
 }
 
 /**

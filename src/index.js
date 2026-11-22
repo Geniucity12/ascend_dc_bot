@@ -48,7 +48,7 @@ const client = new Client({
  * Sends an alert to the configured channel, then pings anyone watching that
  * token. Watch pings are separate messages so the embed stays clean.
  */
-async function sendAlert({ embeds, poolToken }) {
+async function sendAlert({ embeds, components, poolToken }) {
   const channelId = state.alertChannelId
   if (!channelId) {
     log.warn('alert dropped: no alerts channel configured')
@@ -62,7 +62,7 @@ async function sendAlert({ embeds, poolToken }) {
   }
 
   try {
-    await channel.send({ embeds })
+    await channel.send(components?.length ? { embeds, components } : { embeds })
   } catch (e) {
     log.error(`failed to send alert: ${e.message}`)
     return

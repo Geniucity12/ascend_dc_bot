@@ -11,7 +11,7 @@ import {
 } from './db.js'
 import { fetchMetadata } from './metadata.js'
 import { sqrtPriceToPrice, parseSwap } from './price.js'
-import { launchEmbed } from './render.js'
+import { launchMessage } from './render.js'
 import { enqueueTrade } from './digest.js'
 
 const CURSOR_KEY = 'main'
@@ -80,10 +80,7 @@ async function handleLaunch(rawLog, send, res, silent = false) {
     }
     noteAlert(poolId)
  try {
-  await send({
-   embeds: [launchEmbed({ pool: existing, metadata: null, txHash: rawLog.transactionHash })],
-   poolToken: existing.token,
-  })
+ await send(launchMessage({ pool: existing, metadata: null, txHash: rawLog.transactionHash }))
  } catch (e) {
   // Leave it unannounced so a later pass retries instead of losing it.
   log.error(`recover ${existing.symbol ?? poolId.slice(0, 10)} failed: ${e.message}`)
@@ -143,10 +140,7 @@ async function handleLaunch(rawLog, send, res, silent = false) {
   }
 
   noteAlert(poolId)
-  await send({
-    embeds: [launchEmbed({ pool, metadata, txHash: rawLog.transactionHash })],
-    poolToken: token,
-  })
+ await send(launchMessage({ pool, metadata, txHash: rawLog.transactionHash }))
   // Only after the send lands: a failed Discord call must leave the launch
   // recoverable rather than marked as posted.
   markAnnounced(poolId)
@@ -266,7 +260,7 @@ export async function recoverUnannounced(send, head) {
   }
 
   try {
-   await send({ embeds: [launchEmbed({ pool, metadata: null })], poolToken: pool.token })
+ await send(launchMessage({ pool, metadata: null }))
    markAnnounced(pool.poolId)
    announced++
    log.info(`announced previously missed launch ${pool.symbol ?? pool.poolId.slice(0, 10)}`)

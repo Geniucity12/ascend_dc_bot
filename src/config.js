@@ -71,6 +71,15 @@ export const config = {
   },
   ipfsGateway: opt('IPFS_GATEWAY', 'https://ipfs.io/ipfs/'),
   explorerUrl: opt('EXPLORER_URL', 'https://elysium.kinetiq.xyz/explorer').replace(/\/$/, ''),
+  // Where "Buy on Ascend" sends people. The path segment is configurable
+  // because the Ascend app's per-token route is theirs to change — if it moves,
+  // this is an env var rather than a code change.
+  ascendAppUrl: opt('ASCEND_APP_URL', 'https://app.ascendlaunch.xyz').replace(/\/$/, ''),
+  ascendTokenPath: opt('ASCEND_TOKEN_PATH', '/token/'),
+  // Optional trading-partner deep link. Left empty on purpose: the bot will not
+  // invent a partner route it cannot verify. Set e.g.
+  // FOMO_URL_TEMPLATE=https://fomo.biz/token/{ca} and the button appears.
+  fomoUrlTemplate: opt('FOMO_URL_TEMPLATE', ''),
   dbPath: opt('DB_PATH', './data/ascend.db'),
   logLevel: opt('LOG_LEVEL', 'info'),
 }
