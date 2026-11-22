@@ -35,11 +35,12 @@ check('all buttons are link style', buttons.every(b => b.style === 5), buttons.m
 const buy = buttons.find(b => b.label === 'Buy on Ascend')
 check('buy button exists', !!buy)
 check('buy button carries the contract address', buy?.url?.endsWith(CA), buy?.url)
-check('buy button points at the Ascend app', buy?.url?.startsWith('https://app.ascendlaunch.xyz'), buy?.url)
+check('buy button uses the plural /tokens/ route', buy?.url === `https://app.ascendlaunch.xyz/tokens/${CA}`, buy?.url)
 
 const chart = buttons.find(b => b.label === 'View Chart')
 check('chart button exists', !!chart)
-check('chart button points at the explorer', chart?.url?.includes('/token/'), chart?.url)
+check('chart button uses the singular /token/ route', chart?.url === `https://app.ascendlaunch.xyz/token/${CA}`, chart?.url)
+check('buy and chart are different routes', buy?.url !== chart?.url)
 
 // Fomo is opt-in: the bot must not invent a partner route it cannot verify.
 check('no Fomo button without a template', !buttons.some(b => b.label === 'Trade on Fomo'))

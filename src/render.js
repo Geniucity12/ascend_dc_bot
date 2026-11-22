@@ -45,7 +45,7 @@ export function quickBuyRows(pool) {
     new ButtonBuilder()
       .setStyle(ButtonStyle.Link)
       .setLabel('Buy on Ascend')
-      .setURL(`${config.ascendAppUrl}${config.ascendTokenPath}${ca}`),
+      .setURL(`${config.ascendAppUrl}${config.ascendBuyPath}${ca}`),
   )
 
   if (config.fomoUrlTemplate) {
@@ -61,7 +61,7 @@ export function quickBuyRows(pool) {
     new ButtonBuilder()
       .setStyle(ButtonStyle.Link)
       .setLabel('View Chart')
-      .setURL(tokenLink(ca)),
+      .setURL(`${config.ascendAppUrl}${config.ascendChartPath}${ca}`),
   )
 
   // Discord caps a row at five buttons; three are used here, so one row is
