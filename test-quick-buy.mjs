@@ -73,6 +73,22 @@ check('message carries an embed', msg.embeds.length === 1)
 check('message carries the buttons', msg.components.length === 1)
 check('message carries the watch token', msg.poolToken === CA, msg.poolToken)
 
+// Trade digests must carry the same buttons: a digest is the moment someone
+// sees a pool moving, which is exactly when they want to buy it.
+const { digestMessage } = await import('./src/render.js')
+const dmsg = digestMessage({
+  pool,
+  buys: 3,
+  sells: 1,
+  buyVolume: 2,
+  sellVolume: 0.5,
+  largest: { isBuy: true, quoteAmount: 1.5 },
+})
+check('digest carries an embed', dmsg.embeds.length === 1)
+check('digest carries the buttons', dmsg.components.length === 1)
+check('digest buy button has the CA', dmsg.components[0].toJSON().components[0].url.endsWith(CA))
+check('digest carries the watch token', dmsg.poolToken === CA, dmsg.poolToken)
+
 // Every URL must be a valid absolute https URL or Discord 400s the send.
 const urls = msg.components[0].toJSON().components.map(b => b.url)
 check('all urls are https', urls.every(u => u.startsWith('https://')), urls.join(' '))

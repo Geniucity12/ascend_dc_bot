@@ -229,6 +229,15 @@ export function digestEmbed(b) {
  return e
 }
 
+/** Trade digest plus its buy buttons. */
+export function digestMessage(b) {
+  return {
+    embeds: [digestEmbed(b)],
+    components: quickBuyRows(b.pool),
+    poolToken: b.pool.token,
+  }
+}
+
 export function infoEmbed(title, description) {
   return new EmbedBuilder()
     .setColor(COLOR.info)

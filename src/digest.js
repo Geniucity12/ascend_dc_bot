@@ -2,7 +2,7 @@ import { config } from './config.js'
 import { log } from './logger.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, pctChange } from './price.js'
-import { digestEmbed } from './render.js'
+import { digestMessage } from './render.js'
 
 /**
  * Trade digest.
@@ -83,7 +83,7 @@ async function flush() {
     const total = b.buyVolume + b.sellVolume
     if (total < config.alerts.minTradeQuote) continue
     try {
-      await sendFn({ embeds: [digestEmbed(b)], poolToken: b.pool.token })
+      await sendFn(digestMessage(b))
       log.info(
         `digest ${b.pool.symbol ?? '?'} ${b.buys}b/${b.sells}s ${total.toFixed(4)} ` +
         `${quoteInfo(b.pool.quote).symbol}`,
