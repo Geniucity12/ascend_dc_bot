@@ -11,7 +11,7 @@
     "start": "node --disable-warning=ExperimentalWarning src/index.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
     "backfill": "node --disable-warning=ExperimentalWarning src/backfill-cli.js",
-    "test": "node test-price.mjs && node test-silent-backfill.mjs && node --disable-warning=ExperimentalWarning test-subscribe-persist.mjs && node --disable-warning=ExperimentalWarning test-recent-order.mjs && node test-descending-backfill.mjs && node --disable-warning=ExperimentalWarning test-gap-visibility.mjs && node --disable-warning=ExperimentalWarning test-launch-alert-loss.mjs && node --disable-warning=ExperimentalWarning test-legacy-migrate.mjs && node --disable-warning=ExperimentalWarning test-recover-e2e.mjs && node --disable-warning=ExperimentalWarning test-quick-buy.mjs"
+    "test": "node test-price.mjs && node test-silent-backfill.mjs && node --disable-warning=ExperimentalWarning test-subscribe-persist.mjs && node --disable-warning=ExperimentalWarning test-recent-order.mjs && node test-descending-backfill.mjs && node --disable-warning=ExperimentalWarning test-gap-visibility.mjs && node --disable-warning=ExperimentalWarning test-launch-alert-loss.mjs && node --disable-warning=ExperimentalWarning test-legacy-migrate.mjs && node --disable-warning=ExperimentalWarning test-recover-e2e.mjs && node --disable-warning=ExperimentalWarning test-quick-buy.mjs && node --disable-warning=ExperimentalWarning test-digest.mjs"
   },
   "dependencies": {
     "discord.js": "^14.28.1",

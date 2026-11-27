@@ -147,7 +147,7 @@ export async function handleCommand(interaction, state) {
             '',
             '**Launches** post the moment a coin is created — price, market cap, creator, token link.',
             '',
-            `**Trades** are grouped into one summary per coin every ${digest} min, so the channel stays readable. A coin needs ${config.alerts.digestMinTrades} trades or ${config.alerts.digestMinVolume} volume before its trades are reported; anything under ${config.alerts.minTradeQuote} is ignored as dust.`,
+            `**Trades** are grouped into one top-10 volume report every ${digest} min. Coins you watch can also get their own update. A pool needs ${config.alerts.digestMinTrades} trades or ${config.alerts.digestMinVolume} cumulative volume to qualify; trades under ${config.alerts.minTradeQuote} are ignored as dust.`,
             '',
             '**Commands**',
             '`/watch <token>` — get pinged on that coin’s launches and trades',

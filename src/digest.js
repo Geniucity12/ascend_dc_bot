@@ -2,14 +2,16 @@ import { config } from './config.js'
 import { log } from './logger.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, pctChange } from './price.js'
-import { digestMessage } from './render.js'
+import { digestMessage, leaderboardMessage } from './render.js'
+import { watchersOf } from './db.js'
 
 /**
  * Trade digest.
  *
  * Trades are far too frequent to post one embed each — a handful of active
- * pools would bury the channel. Instead every qualifying trade accumulates
- * into a per-pool bucket, and a flush timer posts one summary embed per pool.
+ * pools would bury the channel. Trades accumulate into per-pool buckets, then
+ * each flush posts one combined leaderboard. Watched pools additionally get
+ * their own summary so their watchers retain coin-specific pings.
  *
  * Buckets only exist for pools that pass the activity gate, so a brand-new
  * pool with two trades never produces a digest. Launches still post instantly.
@@ -73,23 +75,42 @@ export function pendingDigestCount() {
   return buckets.size
 }
 
-async function flush() {
+export async function flushDigest() {
   if (!buckets.size || !sendFn) return
 
   const due = [...buckets.values()]
   buckets.clear()
 
-  for (const b of due) {
-    const total = b.buyVolume + b.sellVolume
-    if (total < config.alerts.minTradeQuote) continue
+  const qualified = due.filter(b =>
+    b.buyVolume + b.sellVolume >= config.alerts.minTradeQuote,
+  )
+  if (!qualified.length) return
+
+  const ranked = qualified
+    .sort((a, b) => {
+      const volumeDiff = (b.buyVolume + b.sellVolume) - (a.buyVolume + a.sellVolume)
+      return volumeDiff || String(a.pool.symbol ?? '').localeCompare(String(b.pool.symbol ?? ''))
+    })
+    .slice(0, 10)
+
+  try {
+    await sendFn(leaderboardMessage(ranked, config.alerts.digestSeconds))
+    log.info(`leaderboard posted ${ranked.length} pool(s)`)
+  } catch (e) {
+    log.error(`leaderboard send failed: ${e.message}`)
+  }
+
+  for (const b of qualified) {
+    if (!watchersOf(b.pool.token).length) continue
     try {
       await sendFn(digestMessage(b))
       log.info(
-        `digest ${b.pool.symbol ?? '?'} ${b.buys}b/${b.sells}s ${total.toFixed(4)} ` +
+        `watch digest ${b.pool.symbol ?? '?'} ${b.buys}b/${b.sells}s ` +
+        `${(b.buyVolume + b.sellVolume).toFixed(4)} ` +
         `${quoteInfo(b.pool.quote).symbol}`,
       )
     } catch (e) {
-      log.error(`digest send failed for ${b.pool.symbol ?? b.pool.poolId}: ${e.message}`)
+      log.error(`watch digest send failed for ${b.pool.symbol ?? b.pool.poolId}: ${e.message}`)
     }
   }
 }
@@ -99,7 +120,7 @@ export function startDigest(send) {
   if (flushTimer) return
   const ms = config.alerts.digestSeconds * 1000
   flushTimer = setInterval(() => {
-    flush().catch(e => log.error(`digest flush: ${e.message}`))
+    flushDigest().catch(e => log.error(`digest flush: ${e.message}`))
   }, ms)
   flushTimer.unref?.()
   log.info(`trade digest every ${config.alerts.digestSeconds}s`)

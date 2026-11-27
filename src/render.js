@@ -238,6 +238,33 @@ export function digestMessage(b) {
   }
 }
 
+/** One compact report of the highest-volume pools during a digest window. */
+export function leaderboardEmbed(entries, windowSeconds) {
+  const minutes = Math.max(1, Math.round(windowSeconds / 60))
+  const lines = entries.map((b, i) => {
+    const q = quoteInfo(b.pool.quote)
+    const symbol = String(b.pool.symbol ?? '?').replace(/[\[\]()*_`~|]/g, '').slice(0, 24) || '?'
+    const trades = b.buys + b.sells
+    const volume = b.buyVolume + b.sellVolume
+    const label = `**${symbol}**`
+    const token = b.pool.token
+      ? `[${label}](${tokenLink(b.pool.token)})`
+      : label
+    return `${i + 1}. ${token} — **${fmtAmount(volume)} ${q.symbol}** · ${trades} trades`
+  })
+
+  return new EmbedBuilder()
+    .setColor(COLOR.info)
+    .setTitle(`Top ${entries.length} Ascend pools by volume · Last ${minutes} min`)
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: 'Volume is shown in each pool’s quote asset.' })
+    .setTimestamp(new Date())
+}
+
+export function leaderboardMessage(entries, windowSeconds) {
+  return { embeds: [leaderboardEmbed(entries, windowSeconds)] }
+}
+
 export function infoEmbed(title, description) {
   return new EmbedBuilder()
     .setColor(COLOR.info)

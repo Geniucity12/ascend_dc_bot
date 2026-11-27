@@ -57,7 +57,7 @@ export const config = {
   },
   alerts: {
     minTradeQuote: Number(opt('MIN_TRADE_QUOTE', '0.05')),
-    digestSeconds: num('DIGEST_SECONDS', 300),
+    digestSeconds: num('DIGEST_SECONDS', 600),
     digestMinTrades: num('DIGEST_MIN_TRADES', 10),
     digestMinVolume: num('DIGEST_MIN_VOLUME', 5),
     poolCooldownSeconds: num('POOL_COOLDOWN_SECONDS', 8),
