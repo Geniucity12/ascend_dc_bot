@@ -239,7 +239,7 @@ export function digestMessage(b) {
 }
 
 /** One compact report of the highest-volume pools during a digest window. */
-export function leaderboardEmbed(entries, windowSeconds) {
+export function leaderboardEmbed(entries, windowSeconds, omittedCount = 0) {
   const minutes = Math.max(1, Math.round(windowSeconds / 60))
   const lines = entries.map((b, i) => {
     const q = quoteInfo(b.pool.quote)
@@ -250,19 +250,25 @@ export function leaderboardEmbed(entries, windowSeconds) {
     const token = b.pool.token
       ? `[${label}](${tokenLink(b.pool.token)})`
       : label
-    return `${i + 1}. ${token} — **${fmtAmount(volume)} ${q.symbol}** · ${trades} trades`
+    return `${i + 1}. ${token} — **~$${fmtAmount(b.usdVolume)}** ` +
+      `(${fmtAmount(volume)} ${q.symbol}) · ${trades} trade${trades === 1 ? '' : 's'}`
   })
+
+  const footer = [
+    'USD values are estimates from CoinGecko market prices.',
+    omittedCount ? `${omittedCount} pool(s) omitted: quote USD price unavailable.` : '',
+  ].filter(Boolean).join(' ')
 
   return new EmbedBuilder()
     .setColor(COLOR.info)
-    .setTitle(`Top ${entries.length} Ascend pools by volume · Last ${minutes} min`)
+    .setTitle(`Top ${entries.length} Ascend pools by USD volume · Last ${minutes} min`)
     .setDescription(lines.join('\n'))
-    .setFooter({ text: 'Volume is shown in each pool’s quote asset.' })
+    .setFooter({ text: footer })
     .setTimestamp(new Date())
 }
 
-export function leaderboardMessage(entries, windowSeconds) {
-  return { embeds: [leaderboardEmbed(entries, windowSeconds)] }
+export function leaderboardMessage(entries, windowSeconds, omittedCount = 0) {
+  return { embeds: [leaderboardEmbed(entries, windowSeconds, omittedCount)] }
 }
 
 export function infoEmbed(title, description) {

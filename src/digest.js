@@ -4,6 +4,7 @@ import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, pctChange } from './price.js'
 import { digestMessage, leaderboardMessage } from './render.js'
 import { watchersOf } from './db.js'
+import { getQuoteUsdPrices } from './quote-usd.js'
 
 /**
  * Trade digest.
@@ -86,18 +87,33 @@ export async function flushDigest() {
   )
   if (!qualified.length) return
 
-  const ranked = qualified
+  const quoteUsdPrices = await getQuoteUsdPrices()
+  const priced = qualified.flatMap(b => {
+    const usdRate = quoteUsdPrices.get(b.pool.quote.toLowerCase())
+    if (!usdRate) return []
+    return [{
+      ...b,
+      usdVolume: (b.buyVolume + b.sellVolume) * usdRate,
+    }]
+  })
+  const omittedCount = qualified.length - priced.length
+
+  const ranked = priced
     .sort((a, b) => {
-      const volumeDiff = (b.buyVolume + b.sellVolume) - (a.buyVolume + a.sellVolume)
+      const volumeDiff = b.usdVolume - a.usdVolume
       return volumeDiff || String(a.pool.symbol ?? '').localeCompare(String(b.pool.symbol ?? ''))
     })
     .slice(0, 10)
 
-  try {
-    await sendFn(leaderboardMessage(ranked, config.alerts.digestSeconds))
-    log.info(`leaderboard posted ${ranked.length} pool(s)`)
-  } catch (e) {
-    log.error(`leaderboard send failed: ${e.message}`)
+  if (ranked.length) {
+    try {
+      await sendFn(leaderboardMessage(ranked, config.alerts.digestSeconds, omittedCount))
+      log.info(`USD leaderboard posted ${ranked.length} pool(s); omitted=${omittedCount}`)
+    } catch (e) {
+      log.error(`leaderboard send failed: ${e.message}`)
+    }
+  } else {
+    log.warn('leaderboard skipped: no qualified pools have a USD quote price')
   }
 
   for (const b of qualified) {
