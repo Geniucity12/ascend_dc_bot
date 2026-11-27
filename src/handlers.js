@@ -3,7 +3,17 @@ import { config } from './config.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap, pctChange } from './price.js'
 import { resolveUri } from './metadata.js'
-import { getPoolByToken, addWatch, removeWatch, listWatches, recentPools, topPools, setSetting, poolCount, historyFloor } from './db.js'
+import {
+  getPoolByToken,
+  addWatch,
+  removeWatch,
+  listWatches,
+  recentPools,
+  topPools,
+  setGuildAlertChannelId,
+  poolCount,
+  historyFloor,
+} from './db.js'
 import { getHead } from './chain.js'
 import { infoEmbed, errorEmbed, short } from './render.js'
 
@@ -174,7 +184,7 @@ export async function handleCommand(interaction, state) {
         `**Head block** ${head ?? 'unreachable'}`,
  `**Indexed back to** ${historyFloor() ?? 'unknown'} (backfill low-water)`,
  `**Pools stored** ${poolCount()}`,
-        `**Alerts channel** ${state.alertChannelId ? `<#${state.alertChannelId}>` : 'not set'}`,
+        `**Alerts channel** ${state.alertChannelIds.get(interaction.guildId) ? `<#${state.alertChannelIds.get(interaction.guildId)}>` : 'not set in this server'}`,
         `**Launches** ${config.alerts.launches ? 'on' : 'off'} · **Trades** ${config.alerts.trades ? 'on' : 'off'}`,
         `**Rate cap** ${config.alerts.maxAlertsPerMinute}/min · cooldown ${config.alerts.poolCooldownSeconds}s`,
       ]
@@ -182,9 +192,12 @@ export async function handleCommand(interaction, state) {
     }
 
     if (commandName === 'subscribe') {
+      if (!interaction.guildId) {
+        return interaction.reply({ embeds: [errorEmbed('Subscribe must be used in a server.')], ephemeral: true })
+      }
       const channel = interaction.options.getChannel('channel', true)
-      state.alertChannelId = channel.id
- setSetting("alert_channel_id", channel.id)
+      state.alertChannelIds.set(interaction.guildId, channel.id)
+      setGuildAlertChannelId(interaction.guildId, channel.id)
       return interaction.reply({
         embeds: [infoEmbed('Subscribed', `Live alerts will post in <#${channel.id}>.`)],
         ephemeral: true,
@@ -192,8 +205,11 @@ export async function handleCommand(interaction, state) {
     }
 
     if (commandName === 'unsubscribe') {
-      state.alertChannelId = null
- setSetting("alert_channel_id", null)
+      if (!interaction.guildId) {
+        return interaction.reply({ embeds: [errorEmbed('Unsubscribe must be used in a server.')], ephemeral: true })
+      }
+      state.alertChannelIds.delete(interaction.guildId)
+      setGuildAlertChannelId(interaction.guildId, null)
       return interaction.reply({ embeds: [infoEmbed('Unsubscribed', 'Live alerts are off.')], ephemeral: true })
     }
   } catch (e) {

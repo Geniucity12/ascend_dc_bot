@@ -264,6 +264,16 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(key, String(value))
 }
 
+export function getGuildAlertChannelId(guildId, fallback = null) {
+  const channelId = getSetting(`alert_channel_id:${guildId}`, null)
+  if (channelId === '__disabled__') return null
+  return channelId ?? fallback
+}
+
+export function setGuildAlertChannelId(guildId, channelId) {
+  setSetting(`alert_channel_id:${guildId}`, channelId ?? '__disabled__')
+}
+
 export function poolCount() {
   const row = db.prepare('SELECT COUNT(*) AS n FROM pools').get()
   return row ? row.n : 0
@@ -324,4 +334,3 @@ export function markSeen(id) {
 export function pruneSeen(maxAgeMs = 24 * 60 * 60 * 1000) {
   db.prepare('DELETE FROM seen_events WHERE created_at < ?').run(Date.now() - maxAgeMs)
 }
-

@@ -7,8 +7,13 @@ import { log, setLevel } from './logger.js'
 import { openDb } from './db.js'
 import { commands } from './commands.js'
 import { handleCommand } from './handlers.js'
+import { sendAlertToGuilds } from './alert-delivery.js'
 import { reconcile, startLive, recoverUnannounced } from './watcher.js'
-import { pruneSeen, watchersOf, getSetting } from './db.js'
+import {
+  pruneSeen,
+  getSetting,
+  getGuildAlertChannelId,
+} from './db.js'
 import { infoEmbed } from './render.js'
 import { quoteInfo } from './constants.js'
 import { fmtAmount, fmtPrice, marketCap } from './price.js'
@@ -33,49 +38,18 @@ warnIfEphemeral(config.dbPath)
 
 openDb(config.dbPath)
 
-const state = {
- // Precedence: whatever /subscribe persisted beats ALERT_CHANNEL_ID. The DB
- // wins because it is the more recent, in-Discord decision; the env var is
- // only the bootstrap value for a cold first run.
- alertChannelId: getSetting("alert_channel_id", config.discord.alertChannelId || null),
-}
+const state = { alertChannelIds: new Map() }
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 })
 
 /**
- * Sends an alert to the configured channel, then pings anyone watching that
- * token. Watch pings are separate messages so the embed stays clean.
+ * Sends alerts to each configured guild channel, then pings that guild's
+ * watchers separately so the embed stays clean.
  */
-async function sendAlert({ embeds, components, poolToken }) {
-  const channelId = state.alertChannelId
-  if (!channelId) {
-    log.warn('alert dropped: no alerts channel configured')
-    return
-  }
-
-  const channel = await client.channels.fetch(channelId).catch(() => null)
-  if (!channel?.isTextBased()) {
-    log.warn(`alert dropped: channel ${channelId} not found or not text-based`)
-    return
-  }
-
-  try {
-    await channel.send(components?.length ? { embeds, components } : { embeds })
-  } catch (e) {
-    log.error(`failed to send alert: ${e.message}`)
-    return
-  }
-
-  if (poolToken) {
-    const watchers = watchersOf(poolToken)
-    if (watchers.length) {
-      const mentions = watchers.map(w => `<@${w.user_id}>`).join(' ')
-      await channel.send({ content: mentions, allowedMentions: { users: watchers.map(w => w.user_id) } })
-        .catch(() => {})
-    }
-  }
+async function sendAlert(payload) {
+  return sendAlertToGuilds(client, state.alertChannelIds, payload)
 }
 
 client.once(Events.ClientReady, async (c) => {
@@ -89,6 +63,21 @@ client.once(Events.ClientReady, async (c) => {
   }
 
   log.info(`in ${guilds.length} server(s): ${guilds.map(g => `${g.name} (${g.id})`).join(', ')}`)
+
+  // Keep the legacy single-channel setting working for the guild that owns
+  // that channel. New /subscribe choices are stored independently per guild.
+  const legacyChannelId = getSetting('alert_channel_id', config.discord.alertChannelId || null)
+  let legacyGuildId = null
+  if (legacyChannelId) {
+    const legacyChannel = await c.channels.fetch(legacyChannelId).catch(() => null)
+    legacyGuildId = legacyChannel?.guildId ?? (guilds.length === 1 ? guilds[0].id : null)
+  }
+  for (const guild of guilds) {
+    const fallback = guild.id === legacyGuildId ? legacyChannelId : null
+    const channelId = getGuildAlertChannelId(guild.id, fallback)
+    if (channelId) state.alertChannelIds.set(guild.id, channelId)
+    else log.warn(`no alerts channel configured for ${guild.name}; run /subscribe in that server`)
+  }
 
   const targetGuildId = config.discord.guildId || (guilds.length === 1 ? guilds[0].id : null)
 
@@ -104,16 +93,15 @@ client.once(Events.ClientReady, async (c) => {
     log.error(`command registration failed: ${e.message}`)
   }
 
-  // Tell the user which channels are available if none is configured.
-  if (!state.alertChannelId) {
-    const guild = guilds[0]
+  // List available channels for each server that still needs a destination.
+  for (const guild of guilds.filter(g => !state.alertChannelIds.has(g.id))) {
     const channels = guild.channels.cache
       .filter(ch => ch.isTextBased() && ch.permissionsFor?.(c.user)?.has('SendMessages'))
       .map(ch => `• #${ch.name} — \`${ch.id}\``)
       .slice(0, 20)
       .join('\n')
 
-    log.warn('ALERT_CHANNEL_ID is not set. Pick one and add it to .env:')
+    log.warn(`Pick an alerts channel in ${guild.name} and run /subscribe there:`)
     log.warn(`\n${channels}\n`)
   }
 
@@ -151,7 +139,7 @@ client.once(Events.ClientReady, async (c) => {
   // when nothing is launching or trading.
   setInterval(async () => {
     const head = await getHead().catch(() => null)
-    log.info(`heartbeat · head=${head ?? '?'} · channel=${state.alertChannelId ?? 'none'}`)
+    log.info(`heartbeat · head=${head ?? '?'} · configured alert servers=${state.alertChannelIds.size}`)
   }, 5 * 60 * 1000)
 })
 

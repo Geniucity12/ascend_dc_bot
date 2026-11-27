@@ -101,9 +101,10 @@ export async function flushDigest() {
   }
 
   for (const b of qualified) {
-    if (!watchersOf(b.pool.token).length) continue
+    const guildIds = [...new Set(watchersOf(b.pool.token).map(w => w.guild_id))]
+    if (!guildIds.length) continue
     try {
-      await sendFn(digestMessage(b))
+      await sendFn({ ...digestMessage(b), targetGuildIds: guildIds })
       log.info(
         `watch digest ${b.pool.symbol ?? '?'} ${b.buys}b/${b.sells}s ` +
         `${(b.buyVolume + b.sellVolume).toFixed(4)} ` +
